@@ -27,9 +27,21 @@ const users=[{
 }]
 
 app.get("/",function(req, res){
-    const johankedny= users[0].kidneys;
-    console.log(johankedny);
+    const kidneys = users[0].kidneys;
+    const healthyKidneys = kidneys.filter(k => k.healthy);
+    
+    res.json({
+        totalKidneys: kidneys.length,
+        healthyKidneys: healthyKidneys.length,
+        unhealthyKidneys: kidneys.length - healthyKidneys.length
+    });
 })
 
+
+app.post("/",function(req, res){
+    const ishealthy = res.body.ishealthy;
+    users[0].kidneys.push({healthy:ishealthy});
+    res.json(users[0].kidneys); 
+})  
 
 app.listen(3000);
