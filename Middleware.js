@@ -72,21 +72,3 @@ app.get("/ride3", function(req, res){
 app.listen(3000, function (req, res) {
     console.log("Server is running on port 3000");
 })
-app.use(ticketChecker);
-
-app.get("/ride1",function(req, res){
-    res.send('You rode the frist ride');
-});
-
-
-app.get("/ride2", function(req, res){
-    res.send('You rode the second ride');
-});
-
-app.get("/ride3", function(req, res){
-    res.send('You rode the third ride');
-});
-
-app.listen(3000, function (req, res) {
-    console.log("Server is running on port 3000");
-})
