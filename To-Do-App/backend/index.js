@@ -2,10 +2,11 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const { createTodo, updateTodo } = require("./types");
 const { todo } = require("./db");   // correct import
-
+const cors = require("cors");
 const app = express();
 
 app.use(express.json());
+app.use(cors());
 
 /* CREATE TODO */
 app.post("/todo", async function (req, res) {
