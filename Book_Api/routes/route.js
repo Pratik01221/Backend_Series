@@ -2,18 +2,19 @@ const express = require("express");
 const router = express.Router();
 const Book = require("../model/book");
 const { error } = require("node:console");
-
+const { BookValidation } = require("../Validation");
 
 
 // add books
 
 router.post("/addbook",async(req,res)=>{
     try {
-        const book= Book(req.body);
-        await Book.save();
-        res.status(201).send(book);
+        const validatedData = BookValidation.parse(req.body);
+        const book= Book(validatedData);
+        await book.save();
+        res.status(201).json(book);
     } catch (error) {
-        res.status(400).send(error);
+        res.status(400).json({message:error.message});
     }
 })
 
@@ -22,7 +23,7 @@ router.post("/addbook",async(req,res)=>{
 router.get("/getbooks",(req,res)=>{
     try {
         const book = Book.find();
-        res.status(201).send(book);
+        res.status(201).json(book);
     } catch (error) {
         res.status(400).json({message:error.message})
     }
@@ -33,14 +34,14 @@ router.get("/getbooks",(req,res)=>{
 router.get("/getbook/:id",(req,res)=>{
     const book = Book.findOne({id:req.params.id});
     if(!book){
-        res.status(404).json({message:"user is does not exist"})
+        res.status(404).json({message:"book is not found"})
     } 
-    res.status(202).send(book);
+    res.status(202).json(book);
 })
 
 //update
 
-router.put("/book:id",(req,res)=>{
+router.put("/book/:id",(req,res)=>{
     const book = Book.findOneAndUpdate({id:req.params.id});
     if(!book){
         res.status(404).json({message:"book is not found"})
@@ -48,7 +49,7 @@ router.put("/book:id",(req,res)=>{
     res.status(200).json({message:"Successfully Update book"})
 })
 
-//
+// delete the book
 router.delete("/delete/:id",(req,res)=>{
     const book = Book.findOneAndDelete({id:req.params.id})
     if(!book){
@@ -56,6 +57,5 @@ router.delete("/delete/:id",(req,res)=>{
     }
     res.status(201).json({message:"Delete Book succesfully "})
 })
-
 
 module.exports=router;
