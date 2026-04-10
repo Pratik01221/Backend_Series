@@ -6,10 +6,3 @@ function greet(name: string) {
 }   
 
 greet("Alice");
-
-function greet(name: string) {
-    console.log(`Hello, ${name}!`);
-}   
-
-greet("Alice");
-
