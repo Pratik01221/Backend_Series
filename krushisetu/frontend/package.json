@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.10",
     "axios": "^1.6.2",
     "date-fns": "^2.30.0",
     "lucide-react": "^0.294.0",

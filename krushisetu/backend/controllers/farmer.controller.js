@@ -11,6 +11,21 @@ exports.getFarmerProfile = async (req, res) => {
   }
 };
 
+exports.getAllFarmers = async (req, res) => {
+  try {
+    const farmers = await Farmer.find().populate('userId', 'fullName email phone');
+    const mapped = farmers.map(f => ({
+      _id: f.userId._id,
+      fullName: f.userId.fullName,
+      email: f.userId.email,
+      phone: f.userId.phone,
+    }));
+    res.json(mapped);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 exports.updateFarmerProfile = async (req, res) => {
   try {
     const farmer = await Farmer.findOneAndUpdate({ userId: req.user._id }, req.body, { new: true });

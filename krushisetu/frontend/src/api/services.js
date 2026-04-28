@@ -50,6 +50,7 @@ export const messageAPI = {
   send: (data) => api.post('/messages', data),
   getConversation: (userId) => api.get(`/messages/${userId}`),
   getList: () => api.get('/messages/conversations/list'),
+  getUnreadCount: () => api.get('/messages/unread/count'),
 }
 
 // Admin
@@ -70,4 +71,16 @@ export const farmerAPI = {
 export const traderAPI = {
   getProfile: (id) => api.get(`/traders/${id}`),
   updateProfile: (data) => api.put('/traders/profile/update', data),
+}
+
+// Traders
+export const traderListAPI = {
+  getAll: () => api.get('/traders/list'),
+  getById: (id) => api.get(`/traders/${id}`),
+}
+
+// Farmers
+export const farmerListAPI = {
+  getAll: () => api.get('/farmers/list'),
+  getById: (id) => api.get(`/farmers/${id}`),
 }

@@ -6,6 +6,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const errorHandler = require('./middleware/error.middleware');
 const { authLimiter, generalLimiter } = require('./middleware/rateLimiter.middleware');
+const Message = require('./models/Message.model');
 
 dotenv.config();
 
@@ -43,18 +44,86 @@ app.get('/api/health', (req, res) => res.json({ status: 'KrushiSetu API is runni
 
 // Socket.IO for real-time messaging
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  console.log('A user connected:', socket.id, '| Auth:', socket.handshake.auth.token ? 'Token present' : 'No token');
 
+  // Join a specific conversation room
   socket.on('join_room', (roomId) => {
-    socket.join(roomId);
+    if (roomId && typeof roomId === 'string') {
+      socket.join(roomId);
+      console.log(`Socket ${socket.id} joined room: ${roomId}`);
+    }
   });
 
-  socket.on('send_message', (data) => {
-    io.to(data.roomId).emit('receive_message', data);
+  // Leave a conversation room
+  socket.on('leave_room', (roomId) => {
+    if (roomId && typeof roomId === 'string') {
+      socket.leave(roomId);
+      console.log(`Socket ${socket.id} left room: ${roomId}`);
+    }
   });
 
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+  // Handle sending message via socket (backup to REST API)
+  socket.on('send_message', async (data) => {
+    try {
+      const { receiverId, message, senderId } = data;
+      if (!receiverId || !message) {
+        socket.emit('message_error', { error: 'Invalid message data' });
+        return;
+      }
+      
+      const roomId = [senderId, receiverId].sort().join('_');
+      const msg = await Message.create({ 
+        senderId, 
+        receiverId, 
+        message, 
+        roomId 
+      });
+      
+      const populated = await Message.findById(msg._id)
+        .populate('senderId', 'fullName role')
+        .populate('receiverId', 'fullName role');
+
+      // Emit to the room
+      io.to(roomId).emit('receive_message', populated);
+      console.log(`Message sent in room ${roomId}:`, message.substring(0, 30));
+    } catch (err) {
+      console.error('Socket message error:', err);
+      socket.emit('message_error', { error: err.message });
+    }
+  });
+
+  // Typing indicator
+  socket.on('typing', (data) => {
+    const { roomId, userId, userName } = data;
+    if (roomId) {
+      socket.to(roomId).emit('user_typing', { userId, userName });
+    }
+  });
+
+  // Stop typing indicator
+  socket.on('stop_typing', (data) => {
+    const { roomId, userId } = data;
+    if (roomId) {
+      socket.to(roomId).emit('user_stop_typing', { userId });
+    }
+  });
+
+  // Mark messages as read
+  socket.on('mark_read', async (data) => {
+    try {
+      const { roomId, userId } = data;
+      await Message.updateMany(
+        { roomId, receiverId: userId, isRead: false },
+        { isRead: true }
+      );
+      io.to(roomId).emit('messages_read', { roomId, userId });
+    } catch (err) {
+      console.error('Mark read error:', err);
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('User disconnected:', socket.id, '| Reason:', reason);
   });
 });
 

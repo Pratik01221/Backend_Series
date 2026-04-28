@@ -63,3 +63,16 @@ exports.getConversationList = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// @GET /api/messages/unread/count
+exports.getUnreadCount = async (req, res) => {
+  try {
+    const count = await Message.countDocuments({
+      receiverId: req.user._id,
+      isRead: false,
+    });
+    res.json({ count });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

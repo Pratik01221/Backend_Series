@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Send, Search, MessageSquare } from 'lucide-react'
+import { Send, Search, MessageSquare, Wifi, WifiOff, Plus } from 'lucide-react'
 import DashboardLayout from '../../components/common/DashboardLayout'
 import { messageAPI } from '../../api/services'
 import { useSocket } from '../../hooks/useSocket'
@@ -7,10 +7,11 @@ import { useDebounce } from '../../hooks/useDebounce'
 import { getRoomId, timeAgo, getInitials } from '../../utils/helpers'
 import useAuthStore from '../../store/authStore'
 import toast from 'react-hot-toast'
+import TraderSelectModal from '../../components/common/TraderSelectModal'
 
 export default function Messages() {
   const { user } = useAuthStore()
-  const socket = useSocket()
+  const { socket, isConnected } = useSocket()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -22,13 +23,21 @@ export default function Messages() {
   const [loadingMsgs, setLoadingMsgs] = useState(false)
   const [sending, setSending] = useState(false)
   const [search, setSearch] = useState('')
+  const [typingUsers, setTypingUsers] = useState({})
   const debouncedSearch = useDebounce(search, 300)
+  const [showTraderModal, setShowTraderModal] = useState(false)
 
   // Load conversation list
   useEffect(() => {
     messageAPI.getList()
-      .then(r => setConversations(r.data || []))
-      .catch(() => toast.error('Failed to load conversations'))
+      .then(r => {
+        console.log('📋 Conversations loaded:', r.data?.length || 0)
+        setConversations(r.data || [])
+      })
+      .catch(err => {
+        console.error('Failed to load conversations:', err)
+        toast.error('Failed to load conversations')
+      })
       .finally(() => setLoadingConvos(false))
   }, [])
 
@@ -38,27 +47,42 @@ export default function Messages() {
 
     setLoadingMsgs(true)
     const roomId = getRoomId(user._id, selected._id)
+    console.log('📬 Loading messages for room:', roomId)
 
-    if (socket) socket.emit('join_room', roomId)
+    // Join socket room
+    if (socket) {
+      socket.emit('join_room', roomId)
+      console.log('🔌 Joined room:', roomId)
+    }
 
     messageAPI.getConversation(selected._id)
       .then(r => {
+        console.log('💬 Messages loaded:', r.data?.length || 0)
         setMessages(r.data || [])
         // Mark as read in conversation list
         setConversations(prev =>
           prev.map(c => c.user._id === selected._id ? { ...c, unread: false } : c)
         )
+        // Notify backend that messages are read
+        if (socket) {
+          socket.emit('mark_read', { roomId, userId: user._id })
+        }
       })
-      .catch(() => toast.error('Failed to load messages'))
+      .catch(err => {
+        console.error('Failed to load messages:', err)
+        toast.error('Failed to load messages')
+      })
       .finally(() => setLoadingMsgs(false))
-  }, [selected?._id])
+  }, [selected?._id, user?._id])
 
   // Listen for incoming socket messages
   useEffect(() => {
     if (!socket) return
 
-    const handler = (msg) => {
+    const handleNewMessage = (msg) => {
+      console.log('📨 Received message:', msg.message?.substring(0, 30))
       const roomId = getRoomId(user._id, selected?._id || '')
+      
       // If message is for current open conversation
       if (msg.roomId === roomId) {
         setMessages(prev => {
@@ -66,6 +90,8 @@ export default function Messages() {
           if (prev.some(m => m._id === msg._id)) return prev
           return [...prev, msg]
         })
+        // Mark as read
+        socket.emit('mark_read', { roomId, userId: user._id })
       } else {
         // Update unread badge in sidebar
         setConversations(prev =>
@@ -74,11 +100,46 @@ export default function Messages() {
             return c.user._id === otherId ? { ...c, unread: true, lastMessage: msg.message } : c
           })
         )
+        // Show notification
+        if (msg.senderId !== user._id) {
+          toast(`${msg.senderId?.fullName || 'Someone'}: ${msg.message?.substring(0, 30)}...`)
+        }
       }
     }
 
-    socket.on('receive_message', handler)
-    return () => socket.off('receive_message', handler)
+    const handleTyping = (data) => {
+      if (data.userId !== user._id) {
+        setTypingUsers(prev => ({ ...prev, [selected?._id]: data.userName }))
+      }
+    }
+
+    const handleStopTyping = (data) => {
+      if (data.userId !== user._id) {
+        setTypingUsers(prev => {
+          const next = { ...prev }
+          delete next[selected?._id]
+          return next
+        })
+      }
+    }
+
+    const handleMessagesRead = (data) => {
+      if (data.roomId === getRoomId(user._id, selected?._id)) {
+        setMessages(prev => prev.map(m => ({ ...m, isRead: true })))
+      }
+    }
+
+    socket.on('receive_message', handleNewMessage)
+    socket.on('user_typing', handleTyping)
+    socket.on('user_stop_typing', handleStopTyping)
+    socket.on('messages_read', handleMessagesRead)
+
+    return () => {
+      socket.off('receive_message', handleNewMessage)
+      socket.off('user_typing', handleTyping)
+      socket.off('user_stop_typing', handleStopTyping)
+      socket.off('messages_read', handleMessagesRead)
+    }
   }, [socket, selected?._id, user._id])
 
   // Scroll to bottom on new messages
@@ -86,30 +147,64 @@ export default function Messages() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Handle typing indicator
+  const handleTyping = useCallback(() => {
+    if (socket && selected && user) {
+      const roomId = getRoomId(user._id, selected._id)
+      socket.emit('typing', { roomId, userId: user._id, userName: user.fullName })
+      
+      // Stop typing after 3 seconds
+      setTimeout(() => {
+        socket.emit('stop_typing', { roomId, userId: user._id })
+      }, 3000)
+    }
+  }, [socket, selected, user])
+
   const sendMsg = useCallback(async (e) => {
     e.preventDefault()
     if (!text.trim() || !selected || sending) return
     setSending(true)
+    
+    const roomId = getRoomId(user._id, selected._id)
     const optimistic = {
       _id: `temp-${Date.now()}`,
-      senderId: { _id: user._id },
+      senderId: { _id: user._id, fullName: user.fullName },
       message: text,
       createdAt: new Date().toISOString(),
-      roomId: getRoomId(user._id, selected._id),
+      roomId,
     }
+    
+    console.log('📤 Sending message:', text.substring(0, 30))
     setMessages(prev => [...prev, optimistic])
     setText('')
+    
     try {
-      await messageAPI.send({ receiverId: selected._id, message: optimistic.message })
-    } catch {
+      const response = await messageAPI.send({ receiverId: selected._id, message: text })
+      console.log('✅ Message sent:', response.data?._id)
+      
+      // Replace optimistic message with real one
+      setMessages(prev => prev.map(m => 
+        m._id === optimistic._id ? response.data : m
+      ))
+      
+      // Also emit via socket for real-time
+      if (socket) {
+        socket.emit('send_message', {
+          senderId: user._id,
+          receiverId: selected._id,
+          message: text,
+        })
+      }
+    } catch (err) {
+      console.error('❌ Failed to send message:', err)
       toast.error('Failed to send message')
       setMessages(prev => prev.filter(m => m._id !== optimistic._id))
-      setText(optimistic.message)
+      setText(text)
     } finally {
       setSending(false)
       inputRef.current?.focus()
     }
-  }, [text, selected, sending, user._id])
+  }, [text, selected, sending, socket, user])
 
   const filteredConvos = conversations.filter(c =>
     !debouncedSearch ||
@@ -121,6 +216,21 @@ export default function Messages() {
     return sid === user._id
   }
 
+  // Handle trader selection for new chat
+  const handleTraderSelect = (trader) => {
+    setSelected(trader)
+    setMessages([])
+    // Add to conversations if not already there
+    if (!conversations.some(c => c.user._id === trader._id)) {
+      setConversations(prev => [{
+        user: trader,
+        lastMessage: '',
+        timestamp: new Date(),
+        unread: false,
+      }, ...prev])
+    }
+  }
+
   return (
     <DashboardLayout>
       <h1 className="font-display text-3xl font-bold text-gray-900 mb-6">Messages</h1>
@@ -129,17 +239,24 @@ export default function Messages() {
 
         {/* ── Sidebar ── */}
         <div className="w-72 flex-shrink-0 border-r border-gray-100 flex flex-col">
-          {/* Search */}
-          <div className="p-3 border-b border-gray-100">
-            <div className="relative">
+          {/* Search + New Chat button */}
+          <div className="p-3 border-b border-gray-100 flex gap-2">
+            <div className="relative flex-1">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               <input
-                className="input pl-8 text-sm py-2"
+                className="input pl-8 text-sm py-2 w-full"
                 placeholder="Search conversations…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
             </div>
+            <button
+              onClick={() => setShowTraderModal(true)}
+              className="btn-primary px-3 py-2 flex-shrink-0"
+              title="New Chat"
+            >
+              <Plus size={16} />
+            </button>
           </div>
 
           {/* Conversation list */}
@@ -203,13 +320,28 @@ export default function Messages() {
           ) : (
             <>
               {/* Chat header */}
-              <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-3 bg-white">
-                <div className="w-9 h-9 bg-primary-200 rounded-full flex items-center justify-center text-primary-800 font-bold text-sm flex-shrink-0">
-                  {getInitials(selected.fullName)}
+              <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between bg-white">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-primary-200 rounded-full flex items-center justify-center text-primary-800 font-bold text-sm flex-shrink-0">
+                    {getInitials(selected.fullName)}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm text-gray-900">{selected.fullName}</p>
+                    <p className="text-xs text-gray-400 capitalize">{selected.role}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-semibold text-sm text-gray-900">{selected.fullName}</p>
-                  <p className="text-xs text-gray-400 capitalize">{selected.role}</p>
+                <div className="flex items-center gap-2">
+                  {/* Connection status */}
+                  <div className={`flex items-center gap-1.5 text-xs ${isConnected ? 'text-green-600' : 'text-red-500'}`}>
+                    {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
+                    <span className="hidden sm:inline">{isConnected ? 'Connected' : 'Offline'}</span>
+                  </div>
+                  {/* Typing indicator */}
+                  {typingUsers[selected._id] && (
+                    <span className="text-xs text-primary-600 animate-pulse">
+                      {typingUsers[selected._id]} is typing...
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -264,7 +396,10 @@ export default function Messages() {
                   className="input flex-1 resize-none text-sm"
                   placeholder={`Message ${selected.fullName}…`}
                   value={text}
-                  onChange={e => setText(e.target.value)}
+                  onChange={e => {
+                    setText(e.target.value)
+                    handleTyping()
+                  }}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(e) } }}
                   autoComplete="off"
                 />
@@ -280,6 +415,13 @@ export default function Messages() {
           )}
         </div>
       </div>
+
+      {/* New Chat Modal */}
+      <TraderSelectModal
+        open={showTraderModal}
+        onClose={() => setShowTraderModal(false)}
+        onSelect={handleTraderSelect}
+      />
     </DashboardLayout>
   )
 }
